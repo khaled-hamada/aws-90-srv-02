@@ -2,3 +2,26 @@
 2. As code commit service is closed, try to find a way to connect the aws machine to the git repository
 3. create a launch template for the ec2 instance
 4. update the build script to install required dep. for ubuntu 24 as the old one won't work
+5. get user data execution logs on the ec2 instance
+User-data execution log
+```
+sudo less /var/log/cloud-init-output.log
+```
+6. check the build script for errors
+7. check the running service logs 
+```
+# Real-time view
+sudo journalctl -u srv-02 -f
+
+# Historical logs
+sudo journalctl -u srv-02 --no-pager
+```
+8. check the service status
+```
+sudo systemctl status srv-02
+sudo systemctl status srv-02 --no-pager
+```
+9. check the service is running on the correct port
+```
+sudo ss -tulnp | grep 8002
+```

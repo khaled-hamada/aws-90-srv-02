@@ -1,70 +1,82 @@
 #!/bin/bash
+set -e
 
-# Update packages
-apt update
+# ──────────────────────────────────────────────────────────────────────────────
+# CONFIG
+DOTNET_DIR=/home/ubuntu/dotnet
+REPO_URL=https://github.com/khaled-hamada/aws-90-srv-02.git
+APP_DIR=/home/ubuntu/aws-90-srv-02
+SERVICE_NAME=srv-02
+# ──────────────────────────────────────────────────────────────────────────────
 
-echo "🔧 Installing prerequisites"
-apt install -y git unzip curl
+echo "Installing system prerequisites…"
+sudo apt-get update
+sudo apt-get install -y git unzip curl
 
-# Create dotnet install dir
-echo "💿 Installing .NET SDK 6 manually"
-mkdir -p /home/ubuntu/dotnet
-cd /home/ubuntu/dotnet
+echo "Installing .NET SDK 6.0 manually…"
+# wipe any old install
+sudo rm -rf $DOTNET_DIR
+mkdir -p $DOTNET_DIR
+cd $DOTNET_DIR
 
-# Download SDK 6.0.420 for Linux x64
-wget https://download.visualstudio.microsoft.com/download/pr/64022ae0-d1f7-49e3-8dc4-47c005ed8f9f/62648ac8fdc3c7cde3013487816f8a55/dotnet-sdk-6.0.420-linux-x64.tar.gz
+# correct SDK tarball URL for 6.0.420
+wget https://builds.dotnet.microsoft.com/dotnet/Sdk/6.0.420/dotnet-sdk-6.0.420-linux-x64.tar.gz -O dotnet-sdk.tar.gz
+tar -xzf dotnet-sdk.tar.gz
+rm dotnet-sdk.tar.gz
 
-# Extract SDK
-tar -xzf dotnet-sdk-6.0.420-linux-x64.tar.gz
+echo "Verifying .NET install:"
+$DOTNET_DIR/dotnet --version
 
-# Export dotnet to path
-echo 'export DOTNET_ROOT=/home/ubuntu/dotnet' >> /home/ubuntu/.bashrc
-echo 'export PATH=$PATH:/home/ubuntu/dotnet' >> /home/ubuntu/.bashrc
-export DOTNET_ROOT=/home/ubuntu/dotnet
-export PATH=$PATH:/home/ubuntu/dotnet
-
-# Verify install
-dotnet --version
-
-# Clone your GitHub repo
+echo "Cloning your GitHub repo…"
 cd /home/ubuntu
-echo "📦 Cloning GitHub repository"
-sudo -u ubuntu git clone https://github.com/khaled-hamada/aws-90-srv-02.git
-cd aws-90-srv-02
+# clone as ubuntu user
+sudo -u ubuntu git clone $REPO_URL
+cd $APP_DIR
 
-# Build and publish
-echo "🏗️ Building the .NET app"
-dotnet publish -c Release --self-contained=false --runtime linux-x64
+echo "Publishing the .NET app…"
+# ensure CLI first-use can write
+export DOTNET_CLI_HOME=/tmp
+# always call dotnet via full path
+$DOTNET_DIR/dotnet publish -c Release --self-contained=false --runtime linux-x64
 
-# Find the DLL name automatically (fallback to default name if not detected)
-PUBLISHED_DLL=$(find bin/Release/net6.0/linux-x64 -type f -name "*.dll" | head -n 1)
+echo "Locating the published DLL…"
+PUBLISH_DIR=$(find bin/Release -type d -name publish | head -n1)
+if [ -z "$PUBLISH_DIR" ]; then
+  echo "❌ No publish directory!" >&2
+  exit 1
+fi
+PUBLISHED_DLL=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.dll" | head -n1)
+if [ -z "$PUBLISHED_DLL" ]; then
+  echo "❌ No .dll in $PUBLISH_DIR!" >&2
+  exit 1
+fi
+echo "Found: $PUBLISHED_DLL"
 
-# Create systemd service file
-echo "⚙️ Creating systemd service"
-
-cat >/etc/systemd/system/srv-02.service <<EOL
+echo "Writing systemd unit…"
+# tee under sudo so the file is created with root perms
+sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOF
 [Unit]
 Description=Dotnet S3 info service
 
 [Service]
-ExecStart=/home/ubuntu/dotnet/dotnet $PUBLISHED_DLL
-WorkingDirectory=/home/ubuntu/aws-90-srv-02
-SyslogIdentifier=srv-02
+ExecStart=$DOTNET_DIR/dotnet $APP_DIR/$PUBLISHED_DLL
+WorkingDirectory=$APP_DIR
+SyslogIdentifier=$SERVICE_NAME
 Restart=always
 User=ubuntu
-Environment=DOTNET_CLI_HOME=/temp
-Environment=DOTNET_ROOT=/home/ubuntu/dotnet
-Environment=PATH=/home/ubuntu/dotnet:\$PATH
+
+Environment=DOTNET_CLI_HOME=/tmp
+Environment=DOTNET_ROOT=$DOTNET_DIR
+Environment=PATH=$DOTNET_DIR:\$PATH
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOF
 
-# Reload systemd and enable service
-echo "🔁 Reloading and starting service"
-systemctl daemon-reload
-systemctl enable srv-02
-systemctl start srv-02
+echo "Enabling & starting service…"
+sudo systemctl daemon-reload
+sudo systemctl enable $SERVICE_NAME
+sudo systemctl restart $SERVICE_NAME
 
-# Show status
-systemctl status srv-02 --no-pager
+echo "Final status:"
+sudo systemctl status $SERVICE_NAME --no-pager
